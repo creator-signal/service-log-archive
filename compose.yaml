@@ -1,0 +1,47 @@
+name: service-log-archive
+
+services:
+  log-archive:
+    build:
+      context: .
+      args:
+        VERSION: 0.1.0-dev
+        REVISION: local
+    image: service-log-archive:local
+    user: "10001:10001"
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      LOG_ARCHIVE_ALLOWED_ROOTS: /logs
+      LOG_ARCHIVE_TOKEN_FILE: /run/secrets/log-archive-api-tokens.json
+      LOG_ARCHIVE_DATA_DIR: /var/lib/log-archive/state
+      LOG_ARCHIVE_SPOOL_DIR: /var/lib/log-archive/spool
+      LOG_ARCHIVE_ARCHIVE_DIR: /var/lib/log-archive/archive
+      LOG_ARCHIVE_SPOOL_MAX_BYTES: "268435456"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./examples/compose/logs:/logs
+      - state:/var/lib/log-archive/state
+      - spool:/var/lib/log-archive/spool
+      - archive:/var/lib/log-archive/archive
+      - ./examples/compose/secrets/api-tokens.json:/run/secrets/log-archive-api-tokens.json:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  state:
+  spool:
+  archive:
+

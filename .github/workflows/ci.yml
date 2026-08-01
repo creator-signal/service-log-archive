@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.15.0
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: docker compose config --quiet
+      - run: docker build --build-arg REVISION=${{ github.sha }} -t service-log-archive:test .
+      - run: |
+          docker run --rm --entrypoint /bin/sh service-log-archive:test -c \
+            'test "$(id -u)" = 10001 && test "$(id -g)" = 10001'
+
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - run: docker build -t service-log-archive:scan .
+      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+        with:
+          image-ref: service-log-archive:scan
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: github/codeql-action/upload-sarif@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
