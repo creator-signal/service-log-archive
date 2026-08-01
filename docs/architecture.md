@@ -12,6 +12,8 @@ state volume <──── versioned ledger <──── manifest + gzip spool
                                                       │
                                                       v
 operator UI ──> authenticated API ───────> verified local archive
+                                                      │
+                                                      └──> optional verified S3 archive
 ```
 
 The HTTP server, scheduler, rotation engine, archive worker, and UI are delivered in one versioned image. One active service instance owns a state/spool set. This release does not claim high availability or multi-writer coordination.
@@ -20,7 +22,7 @@ The HTTP server, scheduler, rotation engine, archive worker, and UI are delivere
 
 `state.json` is an atomically replaced schema-versioned document. It contains source policies, segment state, execution outcomes, bounded audit entries, restore-verification outcomes, and a monotonically increasing revision. It contains no log contents or credential material.
 
-Segments transition from `pending` to `completed` or `failed`. Archive retries use immutable names and verify an existing destination before treating it as accepted. Spool data is deleted only after independent destination checksum verification.
+Segments transition from `pending` to `completed` or `failed`. Archive retries use immutable names and verify an existing destination before treating it as accepted. When S3 is configured, gzip and manifest uploads are exclusively created and verified with independent HEAD metadata/size checks; restore re-downloads and hashes the gzip. Spool and local cache data are deleted only after destination verification.
 
 ## Failure boundaries
 

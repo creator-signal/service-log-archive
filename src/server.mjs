@@ -132,6 +132,9 @@ function sendMetrics(response, status) {
     "# HELP log_archive_archive_failed Archive items in failed state.",
     "# TYPE log_archive_archive_failed gauge",
     `log_archive_archive_failed ${status.spool.failed}`,
+    "# HELP log_archive_destination_healthy Whether the configured archive destination has no known failure.",
+    "# TYPE log_archive_destination_healthy gauge",
+    `log_archive_destination_healthy ${status.destinationHealth.status === "healthy" ? 1 : 0}`,
     "",
   ];
   response.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });
@@ -163,4 +166,3 @@ class RateLimiter {
     return bucket.count <= this.#limit;
   }
 }
-

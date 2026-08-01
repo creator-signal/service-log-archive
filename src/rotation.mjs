@@ -17,6 +17,7 @@ import {
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
+import { S3Archive } from "./s3.mjs";
 
 const utcName = (date = new Date()) => date.toISOString().replaceAll(":", "").replaceAll("-", "").replace(".000", "");
 const within = (root, candidate) => candidate === root || candidate.startsWith(`${root}${path.sep}`);
@@ -31,10 +32,14 @@ export class RotationEngine {
   #store;
   #locks = new Set();
   #timer;
+  #s3;
+  #signaler;
 
-  constructor(config, store) {
+  constructor(config, store, { s3 = new S3Archive(config), signaler = process.kill } = {}) {
     this.#config = config;
     this.#store = store;
+    this.#s3 = s3;
+    this.#signaler = signaler;
   }
 
   async start() {
@@ -210,10 +215,18 @@ export class RotationEngine {
       await copyOrVerify(segment.compressedPath, compressedDestination, segment.sha256);
       await copyOrVerify(segment.manifestPath, manifestDestination, await sha256File(segment.manifestPath));
       if ((await sha256File(compressedDestination)) !== segment.sha256) throw new Error("Archive checksum verification failed");
+      let remote = null;
+      if (this.#s3.enabled) {
+        const compressedRemote = await this.#s3.upload(compressedDestination, segment.sourceId, segment.sha256, "application/gzip");
+        const manifestChecksum = await sha256File(manifestDestination);
+        const manifestRemote = await this.#s3.upload(manifestDestination, segment.sourceId, manifestChecksum, "application/json");
+        remote = { compressed: compressedRemote, manifest: manifestRemote };
+        await Promise.all([rm(compressedDestination), rm(manifestDestination)]);
+      }
       await Promise.all([rm(segment.compressedPath, { force: true }), rm(segment.manifestPath, { force: true })]);
       await this.#store.mutate((state) => {
         const entry = state.segments.find((candidate) => candidate.segmentId === segmentId);
-        Object.assign(entry, { status: "completed", attempts: entry.attempts + 1, archivedAt: new Date().toISOString(), lastError: null });
+        Object.assign(entry, { status: "completed", attempts: entry.attempts + 1, archivedAt: new Date().toISOString(), lastError: null, destination: this.#s3.enabled ? "s3" : "local", remote });
       });
     } catch (error) {
       await this.#store.mutate((state) => {
@@ -244,9 +257,13 @@ export class RotationEngine {
   async verifyRestore(actor, correlationId = randomUUID()) {
     const completed = this.#store.snapshot().segments.filter((segment) => segment.status === "completed").at(-1);
     if (!completed) throw notFound("No archived segment is available for verification");
-    const archived = path.join(this.#config.archiveDir, completed.sourceId, path.basename(completed.compressedPath));
+    let archived = path.join(this.#config.archiveDir, completed.sourceId, path.basename(completed.compressedPath));
+    const downloaded = path.join(this.#config.spoolDir, `.restore-${completed.segmentId}.gz`);
     const temporary = path.join(this.#config.spoolDir, `.restore-${completed.segmentId}.tmp`);
     try {
+      if (completed.destination === "s3") {
+        archived = await this.#s3.download(completed.remote.compressed.key, downloaded, completed.sha256);
+      }
       if ((await sha256File(archived)) !== completed.sha256) throw new Error("Archived segment checksum does not match manifest");
       await pipeline(createReadStream(archived), createGunzip(), createWriteStream(temporary, { mode: 0o600 }));
       const restoredBytes = (await stat(temporary)).size;
@@ -258,7 +275,7 @@ export class RotationEngine {
       });
       return result;
     } finally {
-      await rm(temporary, { force: true });
+      await Promise.all([rm(temporary, { force: true }), rm(downloaded, { force: true })]);
     }
   }
 
@@ -266,6 +283,7 @@ export class RotationEngine {
     const state = this.#store.snapshot();
     const spoolBytes = await directoryBytes(this.#config.spoolDir);
     const incomplete = state.segments.filter((segment) => segment.status !== "completed");
+    const lastCompleted = state.segments.filter((segment) => segment.status === "completed").at(-1);
     return {
       stateRevision: state.revision,
       sourceCount: state.sources.length,
@@ -279,6 +297,11 @@ export class RotationEngine {
         oldestAt: incomplete.map((segment) => segment.rotatedAt).sort()[0] || null,
       },
       lastRestoreVerification: state.restoreVerifications.at(-1) || null,
+      archiveDestination: this.#s3.enabled ? "s3" : "local",
+      destinationHealth: {
+        status: incomplete.some((segment) => segment.status === "failed") ? "degraded" : lastCompleted ? "healthy" : "unknown",
+        lastSuccessAt: lastCompleted?.archivedAt || null,
+      },
     };
   }
 
@@ -315,6 +338,11 @@ export class RotationEngine {
     if (reopenUrl && !reopenUrl.startsWith("http://127.0.0.1:") && !reopenUrl.startsWith("http://localhost:")) {
       throw invalid("Reopen callback must use loopback HTTP");
     }
+    const reopenSignal = input.reopenSignal ? String(input.reopenSignal).toUpperCase() : null;
+    const reopenPid = input.reopenPid === undefined || input.reopenPid === null || input.reopenPid === "" ? null : boundedInteger(input.reopenPid, null, 1, 4_194_304);
+    if (reopenSignal && !["SIGHUP", "SIGUSR1", "SIGUSR2"].includes(reopenSignal)) throw invalid("Reopen signal must be SIGHUP, SIGUSR1, or SIGUSR2");
+    if (Boolean(reopenSignal) !== Boolean(reopenPid)) throw invalid("Reopen signal and PID must be configured together");
+    if (reopenUrl && reopenSignal) throw invalid("Configure one reopen callback or signal adapter, not both");
     return {
       id,
       name: String(input.name || id).trim().slice(0, 100),
@@ -326,6 +354,8 @@ export class RotationEngine {
       intervalSeconds,
       compressionLevel: boundedInteger(input.compressionLevel, 6, 1, 9),
       reopenUrl,
+      reopenSignal,
+      reopenPid,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -340,14 +370,19 @@ export class RotationEngine {
   }
 
   async #notifyReopen(source) {
-    if (!source.reopenUrl) return;
-    const response = await fetch(source.reopenUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourceId: source.id, path: source.path }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) throw new Error(`Reopen callback rejected request with ${response.status}`);
+    if (source.reopenSignal) {
+      this.#signaler(source.reopenPid, source.reopenSignal);
+      return;
+    }
+    if (source.reopenUrl) {
+      const response = await fetch(source.reopenUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourceId: source.id, path: source.path }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error(`Reopen callback rejected request with ${response.status}`);
+    }
   }
 
   async #recordExecution(sourceId, trigger, result, error, startedAt = new Date().toISOString(), correlationId = randomUUID()) {

@@ -114,6 +114,82 @@ test("rename/create rotations preserve synthetic events exactly once and archive
   assert.equal((await engine.verifyRestore("test:operator")).result, "passed");
 });
 
+test("fixed PID signal adapter invokes only an allowlisted reopen signal", async () => {
+  const { directories, config, store } = await fixture();
+  const active = path.join(directories.logs, "signal.log");
+  await writeFile(active, "signal-event\n");
+  const signals = [];
+  const engine = new RotationEngine(config, store, { s3: { enabled: false }, signaler: (pid, signal) => signals.push({ pid, signal }) });
+  await engine.createSource({ id: "signal-log", path: active, maxBytes: 1, intervalSeconds: 0, reopenPid: 42, reopenSignal: "SIGHUP" }, "test");
+  await engine.rotate("signal-log", "test");
+  assert.deepEqual(signals, [{ pid: 42, signal: "SIGHUP" }]);
+  await writeFile(active, "again\n");
+  await assert.rejects(() => engine.updateSource("signal-log", { path: active, maxBytes: 1, reopenPid: 42, reopenSignal: "SIGKILL" }, "test"), /must be SIGHUP/);
+});
+
+test("S3 adapter uploads immutable gzip and manifest objects, verifies them, and restores without retaining credentials", async () => {
+  const objects = new Map();
+  const requests = [];
+  const s3 = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    requests.push({ method: request.method, url: request.url, authorization: request.headers.authorization });
+    const existing = objects.get(request.url);
+    if (request.method === "PUT") {
+      if (existing && request.headers["if-none-match"] === "*") return response.writeHead(412).end();
+      objects.set(request.url, { body, checksum: request.headers["x-amz-meta-sha256"], contentType: request.headers["content-type"] });
+      return response.writeHead(200, { etag: `"${createHash("md5").update(body).digest("hex")}"` }).end();
+    }
+    if (request.method === "HEAD" && existing) {
+      return response.writeHead(200, { "content-length": existing.body.length, "x-amz-meta-sha256": existing.checksum, etag: `"test"` }).end();
+    }
+    if (request.method === "GET" && existing) {
+      return response.writeHead(200, { "content-length": existing.body.length, "content-type": existing.contentType }).end(existing.body);
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise((resolve) => s3.listen(0, "127.0.0.1", resolve));
+  const base = await fixture();
+  const accessFile = path.join(base.directories.secrets, "s3-access");
+  const secretFile = path.join(base.directories.secrets, "s3-secret");
+  await writeFile(accessFile, "test-access\n");
+  await writeFile(secretFile, "test-secret\n");
+  const config = await loadConfig({
+    LOG_ARCHIVE_DATA_DIR: base.directories.state,
+    LOG_ARCHIVE_SPOOL_DIR: base.directories.spool,
+    LOG_ARCHIVE_ARCHIVE_DIR: base.directories.archive,
+    LOG_ARCHIVE_ALLOWED_ROOTS: base.directories.logs,
+    LOG_ARCHIVE_TOKEN_FILE: path.join(base.directories.secrets, "tokens.json"),
+    LOG_ARCHIVE_S3_ENDPOINT: `http://127.0.0.1:${s3.address().port}`,
+    LOG_ARCHIVE_S3_BUCKET: "test-archive",
+    LOG_ARCHIVE_S3_PREFIX: "integration/events",
+    LOG_ARCHIVE_S3_ACCESS_KEY_FILE: accessFile,
+    LOG_ARCHIVE_S3_SECRET_KEY_FILE: secretFile,
+  });
+  const store = new StateStore(config);
+  await store.load();
+  const engine = new RotationEngine(config, store);
+  const active = path.join(base.directories.logs, "remote.log");
+  await writeFile(active, "remote-event-1\nremote-event-2\n");
+  try {
+    await engine.createSource({ id: "remote-log", path: active, maxBytes: 1, intervalSeconds: 0 }, "test");
+    await engine.rotate("remote-log", "test");
+    const segment = store.snapshot().segments.at(-1);
+    assert.equal(segment.status, "completed");
+    assert.equal(segment.destination, "s3");
+    assert.match(segment.remote.compressed.key, /^integration\/events\/remote-log\/.+\.log\.gz$/);
+    assert.equal((await readdir(path.join(base.directories.archive, "remote-log"))).length, 0);
+    assert.equal((await engine.verifyRestore("test")).result, "passed");
+    assert.equal(requests.filter((request) => request.method === "PUT").length, 2);
+    assert.equal(requests.some((request) => request.method === "GET"), true);
+    assert.equal(requests.every((request) => request.authorization?.startsWith("AWS4-HMAC-SHA256 Credential=test-access/")), true);
+    assert.doesNotMatch(JSON.stringify(store.snapshot()), /test-access|test-secret|remote-event/);
+  } finally {
+    await new Promise((resolve) => s3.close(resolve));
+  }
+});
+
 test("source registration rejects path escape, symlinks, duplicates, and unacknowledged copytruncate", async () => {
   const { root, directories, engine } = await fixture();
   const outside = path.join(root, "outside.log");

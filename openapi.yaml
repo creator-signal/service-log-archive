@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Log Archive API
-  version: 0.1.0
+  version: 0.2.0
   description: Provider-neutral management API. Raw log and credential contents are never returned.
 servers:
   - url: /
@@ -133,6 +133,8 @@ components:
         intervalSeconds: { type: integer, minimum: 0, maximum: 31536000, default: 86400 }
         compressionLevel: { type: integer, minimum: 1, maximum: 9, default: 6 }
         reopenUrl: { type: [string, "null"], format: uri }
+        reopenSignal: { type: [string, "null"], enum: [SIGHUP, SIGUSR1, SIGUSR2, null] }
+        reopenPid: { type: [integer, "null"], minimum: 1 }
       required: [id, path]
     Source:
       allOf:
@@ -170,5 +172,6 @@ components:
         enabledSourceCount: { type: integer }
         spool: { type: object }
         lastRestoreVerification: { type: [object, "null"] }
+        archiveDestination: { type: string, enum: [local, s3] }
+        destinationHealth: { type: object, properties: { status: { type: string, enum: [healthy, degraded, unknown] }, lastSuccessAt: { type: [string, "null"], format: date-time } }, required: [status, lastSuccessAt] }
       required: [stateRevision, sourceCount, enabledSourceCount, spool]
-

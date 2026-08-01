@@ -26,6 +26,36 @@ jobs:
       - run: |
           docker run --rm --entrypoint /bin/sh service-log-archive:test -c \
             'test "$(id -u)" = 10001 && test "$(id -g)" = 10001'
+      - name: Run real MinIO adapter acceptance
+        run: |
+          set -euo pipefail
+          network="log-archive-minio-${GITHUB_RUN_ID}"
+          container="log-archive-minio-${GITHUB_RUN_ID}"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$network" >/dev/null
+          docker run -d --name "$container" --network "$network" --network-alias minio \
+            -p 127.0.0.1:49000:9000 \
+            -e MINIO_ROOT_USER=minio-acceptance \
+            -e MINIO_ROOT_PASSWORD=minio-acceptance-secret \
+            minio/minio:RELEASE.2025-07-23T15-54-02Z@sha256:d249d1fb6966de4d8ad26c04754b545205ff15a62e4fd19ebd0f26fa5baacbc0 \
+            server /data --address :9000 >/dev/null
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:49000/minio/health/ready >/dev/null && break
+            test "$attempt" -lt 30
+            sleep 2
+          done
+          docker run --rm --network "$network" --entrypoint /bin/sh \
+            minio/mc:RELEASE.2025-07-21T05-28-08Z@sha256:fb8f773eac8ef9d6da0486d5dec2f42f219358bcb8de579d1623d518c9ebd4cc \
+            -c 'mc alias set acceptance http://minio:9000 minio-acceptance minio-acceptance-secret >/dev/null && mc mb acceptance/log-archive-acceptance >/dev/null'
+          MINIO_ACCEPTANCE_ENDPOINT=http://127.0.0.1:49000 \
+          MINIO_ACCEPTANCE_ACCESS_KEY=minio-acceptance \
+          MINIO_ACCEPTANCE_SECRET_KEY=minio-acceptance-secret \
+          MINIO_ACCEPTANCE_BUCKET=log-archive-acceptance \
+            npm run test:minio
 
   scan:
     runs-on: ubuntu-24.04
