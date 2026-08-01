@@ -1,0 +1,9 @@
+services:
+  log-archive:
+    image: service-log-archive:local
+    build:
+      context: .
+      args:
+        VERSION: 0.1.0-dev
+        REVISION: local
+

@@ -21,6 +21,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: docker compose config --quiet
+      - run: docker compose -f compose.yaml -f compose.build.yaml config --quiet
       - run: docker build --build-arg REVISION=${{ github.sha }} -t service-log-archive:test .
       - run: |
           docker run --rm --entrypoint /bin/sh service-log-archive:test -c \

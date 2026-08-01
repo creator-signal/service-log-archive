@@ -2,12 +2,7 @@ name: service-log-archive
 
 services:
   log-archive:
-    build:
-      context: .
-      args:
-        VERSION: 0.1.0-dev
-        REVISION: local
-    image: service-log-archive:local
+    image: ${LOG_ARCHIVE_IMAGE:-ghcr.io/creator-signal/service-log-archive@sha256:f89d824e20e9b2b3615d55f10de2a82e81ded77792d18d2f5138dd4eecf5a405}
     user: "10001:10001"
     read_only: true
     init: true
