@@ -29,7 +29,8 @@ The repository includes a synthetic credential and fixture directory for local u
 
 ```sh
 printf 'event-1\nevent-2\n' > examples/compose/logs/application.log
-docker compose up --build -d
+docker compose pull
+docker compose up -d
 ```
 
 Open <http://127.0.0.1:8080>, connect with `local-development-only`, and add `/logs/application.log`.
@@ -149,6 +150,7 @@ Requires Node.js 24 and Docker:
 npm ci
 npm run check
 docker compose config --quiet
+docker compose -f compose.yaml -f compose.build.yaml config --quiet
 docker build -t service-log-archive:dev .
 ```
 
