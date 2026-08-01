@@ -1,0 +1,18 @@
+{
+  "name": "@creator-signal/service-log-archive",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone log rotation, archival, API, and operator UI service",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test --test-reporter=spec",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "check": "node --check src/index.mjs && node --check src/server.mjs && node --check public/app.js && npm test"
+  },
+  "license": "Apache-2.0"
+}
+

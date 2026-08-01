@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Log Archive</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="eyebrow">OPERATIONS</span>
+        <h1>Log Archive</h1>
+      </div>
+      <button id="session-button" class="secondary">Connect</button>
+    </header>
+    <main>
+      <section id="session" class="panel session" aria-labelledby="session-title">
+        <div>
+          <h2 id="session-title">Connect securely</h2>
+          <p>Enter a scoped API token. It stays in this tab and is sent only as a bearer credential.</p>
+        </div>
+        <form id="session-form">
+          <label for="token">API token</label>
+          <div class="inline"><input id="token" name="token" type="password" autocomplete="off" required><button>Connect</button></div>
+        </form>
+      </section>
+
+      <div id="workspace" hidden>
+        <section class="summary" aria-label="Operational summary">
+          <article><span>Sources</span><strong id="source-count">—</strong><small id="enabled-count">— enabled</small></article>
+          <article><span>Spool usage</span><strong id="spool-bytes">—</strong><small id="spool-limit">— capacity</small></article>
+          <article><span>Archive queue</span><strong id="pending-count">—</strong><small id="failed-count">— failed</small></article>
+          <article><span>Restore proof</span><strong id="restore-status">—</strong><small id="restore-time">Not yet verified</small></article>
+        </section>
+
+        <section class="panel toolbar">
+          <div><h2>Managed sources</h2><p>Only explicitly mounted, allowlisted files can be registered.</p></div>
+          <div class="actions"><button id="retry-button" class="secondary">Retry archive</button><button id="verify-button" class="secondary">Verify restore</button><button id="add-button">Add source</button></div>
+        </section>
+
+        <section class="panel table-wrap">
+          <table>
+            <thead><tr><th>Source</th><th>State</th><th>Active size</th><th>Last rotation</th><th>Queue</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody id="sources"><tr><td colspan="6" class="empty">Loading sources…</td></tr></tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <div class="toolbar"><div><h2>Audit history</h2><p>Configuration and manual operations, without log contents.</p></div></div>
+          <ol id="audit" class="timeline"><li class="empty">No activity yet.</li></ol>
+        </section>
+      </div>
+    </main>
+
+    <dialog id="source-dialog">
+      <form id="source-form" method="dialog">
+        <div class="dialog-heading"><div><span class="eyebrow">SOURCE POLICY</span><h2 id="dialog-title">Add a managed file</h2></div><button type="button" class="icon secondary" id="close-dialog" aria-label="Close">×</button></div>
+        <label for="source-id">Identifier</label><input id="source-id" name="id" pattern="[a-z][a-z0-9-]{1,62}" placeholder="application-audit" required>
+        <label for="source-name">Display name</label><input id="source-name" name="name" placeholder="Application audit log" required>
+        <label for="source-path">Mounted file path</label><input id="source-path" name="path" placeholder="/logs/application/audit.log" required>
+        <div class="grid-two"><div><label for="source-size">Rotate at bytes</label><input id="source-size" name="maxBytes" type="number" min="0" value="10485760"></div><div><label for="source-time">Rotate every seconds</label><input id="source-time" name="intervalSeconds" type="number" min="0" value="86400"></div></div>
+        <label for="source-strategy">Reopen strategy</label><select id="source-strategy" name="strategy"><option value="rename-create">Rename/create (recommended)</option><option value="copytruncate">Copy/truncate (compatibility risk)</option></select>
+        <label for="reopen-url">Loopback reopen callback (optional)</label><input id="reopen-url" name="reopenUrl" type="url" placeholder="http://127.0.0.1:9000/reopen">
+        <label class="check"><input name="enabled" type="checkbox" checked> Enable scheduled rotation for this source.</label>
+        <label id="copy-warning" class="check" hidden><input name="copytruncateWarningAccepted" type="checkbox"> I accept that copy/truncate can lose or duplicate bytes written during the copy window.</label>
+        <p id="form-error" class="error" role="alert"></p>
+        <div class="dialog-actions"><button type="button" class="secondary" id="cancel-dialog">Cancel</button><button value="submit" id="save-source">Create source</button></div>
+      </form>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+.env
+.DS_Store
+state/
+spool/
+archive/
+fixtures/logs/*.log
+examples/compose/logs/*.log

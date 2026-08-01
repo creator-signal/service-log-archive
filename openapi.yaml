@@ -1,0 +1,174 @@
+openapi: 3.1.0
+info:
+  title: Log Archive API
+  version: 0.1.0
+  description: Provider-neutral management API. Raw log and credential contents are never returned.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /livez:
+    get:
+      operationId: getLiveness
+      security: []
+      responses:
+        "200": { description: Process is live, content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } } }
+  /readyz:
+    get:
+      operationId: getReadiness
+      security: []
+      responses:
+        "200": { description: State store is loaded, content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } } }
+  /api/v1/status:
+    get:
+      operationId: getStatus
+      x-required-role: viewer
+      responses:
+        "200": { description: Bounded operational status, content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources:
+    get:
+      operationId: listSources
+      x-required-role: viewer
+      responses:
+        "200": { description: Configured sources and bounded health, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/SourceView" } } }, required: [items] } } } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createSource
+      x-required-role: administrator
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/SourceInput" } } } }
+      responses:
+        "201": { description: Source created, content: { application/json: { schema: { $ref: "#/components/schemas/Source" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{sourceId}:
+    parameters:
+      - $ref: "#/components/parameters/SourceId"
+    put:
+      operationId: updateSource
+      x-required-role: administrator
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/SourceInput" } } } }
+      responses:
+        "200": { description: Source updated, content: { application/json: { schema: { $ref: "#/components/schemas/Source" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteSource
+      x-required-role: administrator
+      responses:
+        "204": { description: Source deleted }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{sourceId}/rotate:
+    parameters:
+      - $ref: "#/components/parameters/SourceId"
+    post:
+      operationId: rotateSource
+      x-required-role: operator
+      responses:
+        "202": { description: Rotation and local archival completed, content: { application/json: { schema: { $ref: "#/components/schemas/SegmentManifest" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/archive/retry:
+    post:
+      operationId: retryArchive
+      x-required-role: operator
+      responses:
+        "202": { description: Pending archive work was retried, content: { application/json: { schema: { type: object } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/restore-verifications:
+    post:
+      operationId: verifyRestore
+      x-required-role: operator
+      responses:
+        "201": { description: Non-destructive restore verification passed, content: { application/json: { schema: { type: object } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/audit:
+    get:
+      operationId: listAudit
+      x-required-role: viewer
+      responses:
+        "200": { description: Bounded audit history, content: { application/json: { schema: { type: object } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /metrics:
+    get:
+      operationId: getMetrics
+      x-required-role: viewer
+      responses:
+        "200": { description: Prometheus metrics, content: { text/plain: { schema: { type: string } } } }
+        default: { $ref: "#/components/responses/Problem" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Scoped API token or an RS256 OIDC access token.
+  parameters:
+    SourceId:
+      name: sourceId
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[a-z][a-z0-9-]{1,62}$" }
+  responses:
+    Problem:
+      description: RFC 9457-style bounded problem document
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+  schemas:
+    Probe:
+      type: object
+      properties: { status: { type: string }, stateRevision: { type: integer } }
+      required: [status]
+    Problem:
+      type: object
+      properties: { type: { type: string, format: uri }, title: { type: string }, status: { type: integer }, detail: { type: string } }
+      required: [type, title, status, detail]
+    SourceInput:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string, pattern: "^[a-z][a-z0-9-]{1,62}$" }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        path: { type: string, minLength: 1 }
+        enabled: { type: boolean, default: true }
+        strategy: { type: string, enum: [rename-create, copytruncate], default: rename-create }
+        copytruncateWarningAccepted: { type: boolean, default: false }
+        maxBytes: { type: integer, minimum: 0, default: 0 }
+        intervalSeconds: { type: integer, minimum: 0, maximum: 31536000, default: 86400 }
+        compressionLevel: { type: integer, minimum: 1, maximum: 9, default: 6 }
+        reopenUrl: { type: [string, "null"], format: uri }
+      required: [id, path]
+    Source:
+      allOf:
+        - $ref: "#/components/schemas/SourceInput"
+        - type: object
+          properties: { createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time } }
+    SourceView:
+      allOf:
+        - $ref: "#/components/schemas/Source"
+        - type: object
+          properties:
+            activeBytes: { type: [integer, "null"] }
+            health: { type: string, enum: [healthy, warning, critical, disabled, unknown] }
+            pendingSegments: { type: integer }
+            executions: { type: array, items: { type: object } }
+    SegmentManifest:
+      type: object
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        segmentId: { type: string, format: uuid }
+        sourceId: { type: string }
+        sourcePath: { type: string }
+        rotatedAt: { type: string, format: date-time }
+        originalBytes: { type: integer }
+        compressedBytes: { type: integer }
+        compression: { type: string, const: gzip }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        warning: { type: [string, "null"] }
+      required: [schemaVersion, segmentId, sourceId, rotatedAt, originalBytes, compressedBytes, compression, sha256]
+    Status:
+      type: object
+      properties:
+        stateRevision: { type: integer }
+        sourceCount: { type: integer }
+        enabledSourceCount: { type: integer }
+        spool: { type: object }
+        lastRestoreVerification: { type: [object, "null"] }
+      required: [stateRevision, sourceCount, enabledSourceCount, spool]
+
