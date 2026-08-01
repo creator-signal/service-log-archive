@@ -16,7 +16,7 @@ docker compose up -d
 
 Open <http://127.0.0.1:8080>, connect using the local token, and register `/logs/application.log`. The service has no Docker socket, host discovery, cloud credentials, or consumer-specific configuration.
 
-The default Compose file consumes the public `v0.1.0` image by immutable multi-architecture digest. Contributors can instead build the checkout with:
+The default Compose file consumes the public `v0.2.0` image by immutable multi-architecture digest. Contributors can instead build the checkout with:
 
 ```sh
 docker compose -f compose.yaml -f compose.build.yaml up --build -d
