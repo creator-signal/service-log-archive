@@ -4,7 +4,7 @@
 
 It runs as one non-root container. Consumers explicitly mount managed log files/directories, durable state, a bounded spool, an archive directory, and runtime authentication material. The service does not discover host paths, mount paths dynamically, read a Docker socket, or contain Creator Signal deployment configuration.
 
-> Status: `0.1.0` release candidate. Local filesystem archival is implemented. S3-compatible archival is intentionally disabled until its immutable-upload and independent-verification acceptance suite is complete.
+> Status: `0.2.0` release candidate. Local filesystem archival is the default; optional S3-compatible archival is enabled only through explicit endpoint, bucket, prefix, and file-backed credential configuration.
 
 ## Capabilities
 
@@ -12,6 +12,7 @@ It runs as one non-root container. Consumers explicitly mount managed log files/
 - preferred rename/create rotation with an optional, loopback-only reopen callback;
 - explicit-risk `copytruncate` compatibility mode;
 - gzip compression, SHA-256 manifests, UTC-sortable immutable names;
+- optional SigV4 S3-compatible upload with exclusive creation, metadata/size verification, file-backed credentials, and restore download verification;
 - separately mounted, capacity-bounded spool, state, and archive paths;
 - idempotent archive retry and non-destructive restore verification;
 - durable source policies, execution history, segment state, audit history, and schema version;
@@ -65,7 +66,23 @@ The full API is published in [openapi.yaml](openapi.yaml). The local example is 
 
 The service canonicalizes each source path, rejects traversal and symlink escape, requires a regular file, and permits only paths beneath `LOG_ARCHIVE_ALLOWED_ROOTS`.
 
-The producer and service must share compatible UID/GID and permissions for rename/create. Configure a narrow loopback callback if the producer must reopen the file. Host PID access, arbitrary commands, and Docker-socket signaling are not supported.
+The producer and service must share compatible UID/GID and permissions for rename/create. Configure either a narrow loopback callback or a fixed PID plus `SIGHUP`, `SIGUSR1`, or `SIGUSR2` if the producer must reopen the file. A signal adapter requires an explicitly shared PID namespace and compatible non-root identity; host PID access is not enabled by the product examples. Arbitrary commands and Docker-socket signaling are not supported.
+
+## Optional S3-compatible archive
+
+Set the endpoint, bucket, prefix, region, and both credential files to enable remote archival:
+
+```text
+LOG_ARCHIVE_S3_ENDPOINT=https://minio.internal.example
+LOG_ARCHIVE_S3_BUCKET=operator-log-archive
+LOG_ARCHIVE_S3_PREFIX=production
+LOG_ARCHIVE_S3_REGION=us-east-1
+LOG_ARCHIVE_S3_ACCESS_KEY_FILE=/run/secrets/s3-access-key
+LOG_ARCHIVE_S3_SECRET_KEY_FILE=/run/secrets/s3-secret-key
+NODE_EXTRA_CA_CERTS=/run/secrets/private-ca.pem
+```
+
+Credentials are reread for every archive attempt so a rotated file can take effect without persisting the values. The adapter uses path-style SigV4 requests, `If-None-Match: *`, SHA-256 object metadata, HEAD size/metadata verification, and verified GET for restore checks. Local spool and archive-cache objects are removed only after both the gzip and manifest are accepted remotely. Bucket creation, lifecycle, quota, multipart cleanup, credential issuance, private CA distribution, and off-site copy remain consumer control-plane responsibilities.
 
 ## Authentication
 
@@ -135,12 +152,18 @@ A failed reopen callback is recorded as a warning while the already-rotated segm
 | `LOG_ARCHIVE_HISTORY_LIMIT` | `500` | Bound for execution/audit/restore histories. |
 | `LOG_ARCHIVE_REQUEST_MAX_BYTES` | `65536` | JSON request limit. |
 | `LOG_ARCHIVE_RATE_LIMIT_PER_MINUTE` | `120` | Per-address request limit. |
+| `LOG_ARCHIVE_S3_ENDPOINT` | disabled | S3-compatible endpoint; setting it enables the adapter. |
+| `LOG_ARCHIVE_S3_BUCKET` | none | Dedicated destination bucket. |
+| `LOG_ARCHIVE_S3_PREFIX` | `log-archive` | Narrow immutable object prefix. |
+| `LOG_ARCHIVE_S3_REGION` | `us-east-1` | SigV4 region. |
+| `LOG_ARCHIVE_S3_ACCESS_KEY_FILE` | none | Read-only access-key file. |
+| `LOG_ARCHIVE_S3_SECRET_KEY_FILE` | none | Read-only secret-key file. |
 
 ## Back up and restore
 
 Stop the service or snapshot all three writable volumes consistently. Back up state, spool, and archive independently. Restore them to empty volumes with the same ownership, start the same or newer compatible major version, wait for `/readyz`, call `POST /api/v1/archive/retry`, then call `POST /api/v1/restore-verifications`.
 
-Unknown state schema versions fail closed. See [docs/migrations.md](docs/migrations.md) for upgrade and rollback rules.
+Unknown state schema versions fail closed. See [docs/migrations.md](docs/migrations.md) for upgrade and rollback rules. When S3 is enabled, restore verification downloads the selected immutable object, verifies its checksum, decompresses it, and compares the restored byte count without exposing contents.
 
 ## Development
 

@@ -32,7 +32,7 @@ async function refresh() {
   $("#spool-bytes").textContent = bytes(status.spool.bytes);
   $("#spool-limit").textContent = `${bytes(status.spool.maxBytes)} capacity`;
   $("#pending-count").textContent = status.spool.pending;
-  $("#failed-count").textContent = `${status.spool.failed} failed`;
+  $("#failed-count").textContent = `${status.spool.failed} failed · ${status.archiveDestination} ${status.destinationHealth.status}`;
   $("#restore-status").textContent = status.lastRestoreVerification?.result || "Pending";
   $("#restore-time").textContent = status.lastRestoreVerification ? date(status.lastRestoreVerification.verifiedAt) : "Not yet verified";
   sourceItems = sources.items;
@@ -73,7 +73,7 @@ function openSourceDialog(source = null) {
   $("#dialog-title").textContent = source ? "Edit managed file" : "Add a managed file";
   $("#save-source").textContent = source ? "Save changes" : "Create source";
   if (source) {
-    for (const name of ["id", "name", "path", "maxBytes", "intervalSeconds", "strategy", "reopenUrl"]) {
+    for (const name of ["id", "name", "path", "maxBytes", "intervalSeconds", "strategy", "reopenUrl", "reopenSignal", "reopenPid"]) {
       const field = $("#source-form").elements.namedItem(name); if (field) field.value = source[name] ?? "";
     }
     $("#source-form").elements.namedItem("copytruncateWarningAccepted").checked = source.copytruncateWarningAccepted;
@@ -107,7 +107,7 @@ $("#cancel-dialog").addEventListener("click", () => $("#source-dialog").close())
 $("#source-strategy").addEventListener("change", (event) => { $("#copy-warning").hidden = event.target.value !== "copytruncate"; });
 $("#source-form").addEventListener("submit", async (event) => {
   event.preventDefault(); const form = new FormData(event.currentTarget); const submit = event.submitter; submit.disabled = true; $("#form-error").textContent = "";
-  const document = Object.fromEntries(form); document.id = editingId || document.id; document.maxBytes = Number(document.maxBytes); document.intervalSeconds = Number(document.intervalSeconds); document.enabled = form.has("enabled"); document.copytruncateWarningAccepted = form.has("copytruncateWarningAccepted");
+  const document = Object.fromEntries(form); document.id = editingId || document.id; document.maxBytes = Number(document.maxBytes); document.intervalSeconds = Number(document.intervalSeconds); document.reopenPid = document.reopenPid ? Number(document.reopenPid) : null; document.enabled = form.has("enabled"); document.copytruncateWarningAccepted = form.has("copytruncateWarningAccepted");
   try { await api(editingId ? `/api/v1/sources/${editingId}` : "/api/v1/sources", { method:editingId ? "PUT" : "POST", body:JSON.stringify(document) }); $("#source-dialog").close(); event.currentTarget.reset(); show(editingId ? "Source updated" : "Source created"); editingId = null; await refresh(); }
   catch (error) { $("#form-error").textContent = error.message; }
   finally { submit.disabled = false; }

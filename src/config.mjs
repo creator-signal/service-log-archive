@@ -20,6 +20,16 @@ export async function loadConfig(env = process.env) {
 
   await Promise.all([dataDir, spoolDir, archiveDir, ...roots].map((directory) => mkdir(directory, { recursive: true })));
   const canonicalRoots = await Promise.all(roots.map((root) => realpath(root)));
+  const s3Endpoint = env.LOG_ARCHIVE_S3_ENDPOINT?.replace(/\/$/, "") || "";
+  const s3Bucket = env.LOG_ARCHIVE_S3_BUCKET || "";
+  const s3Prefix = (env.LOG_ARCHIVE_S3_PREFIX || "log-archive").replace(/^\/+|\/+$/g, "");
+  if (s3Endpoint) {
+    const endpoint = new URL(s3Endpoint);
+    if (!["https:", "http:"].includes(endpoint.protocol)) throw new Error("LOG_ARCHIVE_S3_ENDPOINT must use HTTP or HTTPS");
+    if (!s3Bucket || !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(s3Bucket)) throw new Error("LOG_ARCHIVE_S3_BUCKET is required and must be a valid bucket name");
+    if (!env.LOG_ARCHIVE_S3_ACCESS_KEY_FILE || !env.LOG_ARCHIVE_S3_SECRET_KEY_FILE) throw new Error("S3 credentials must use access-key and secret-key files");
+    if (s3Prefix.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("LOG_ARCHIVE_S3_PREFIX is invalid");
+  }
 
   return Object.freeze({
     host: env.LOG_ARCHIVE_HOST || "0.0.0.0",
@@ -37,6 +47,15 @@ export async function loadConfig(env = process.env) {
     historyLimit: integer(env.LOG_ARCHIVE_HISTORY_LIMIT, 500),
     requestMaxBytes: integer(env.LOG_ARCHIVE_REQUEST_MAX_BYTES, 64 * 1024),
     rateLimitPerMinute: integer(env.LOG_ARCHIVE_RATE_LIMIT_PER_MINUTE, 120),
+    s3: Object.freeze({
+      enabled: Boolean(s3Endpoint),
+      endpoint: s3Endpoint,
+      bucket: s3Bucket,
+      prefix: s3Prefix,
+      region: env.LOG_ARCHIVE_S3_REGION || "us-east-1",
+      accessKeyFile: env.LOG_ARCHIVE_S3_ACCESS_KEY_FILE || "",
+      secretKeyFile: env.LOG_ARCHIVE_S3_SECRET_KEY_FILE || "",
+    }),
   });
 }
 

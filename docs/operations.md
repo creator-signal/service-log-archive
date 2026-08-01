@@ -13,6 +13,8 @@ Alert on failed archive work, spool utilization and oldest age, missing active f
 
 Rotation continues while the spool has capacity. Failed items remain in durable state and on disk. Restore the archive destination, call `POST /api/v1/archive/retry`, and verify the queue returns to zero. Do not delete spool files manually.
 
+For S3-compatible destinations, confirm endpoint/CA reachability, bucket/prefix policy, quota, and credential files independently. The service rereads credential files on each attempt. Rotate both files atomically at the deployment boundary, restore connectivity, retry the queue, and run restore verification. Never grant bucket-administrator or destructive mirror-delete authority to the worker identity.
+
 ## Reopen failure
 
 The rotation completes with a warning because the old segment is already preserved. Confirm the producer opened the replacement path before accepting further writes. Fix the callback/producer configuration and run a synthetic continuity test.
@@ -24,4 +26,3 @@ Quiesce the container or take a consistent filesystem snapshot of state, spool, 
 ## Upgrade
 
 Use an immutable image digest. Back up all writable volumes, stop the old instance, start one new instance, check readiness, API/UI authorization, source paths, archive retry, and restore verification. Roll back by restoring the matching snapshot and prior digest; do not downgrade migrated state speculatively.
-
