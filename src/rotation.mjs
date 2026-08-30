@@ -162,6 +162,7 @@ export class RotationEngine {
         await truncate(source.path, 0);
       }
 
+      const originalBytes = (await stat(rawPath)).size;
       await pipeline(createReadStream(rawPath), createGzip({ level: source.compressionLevel }), createWriteStream(compressedPath, { mode: 0o600 }));
       await rm(rawPath);
       const compressedBytes = (await stat(compressedPath)).size;
@@ -172,7 +173,7 @@ export class RotationEngine {
         sourceId: source.id,
         sourcePath: source.path,
         rotatedAt: new Date().toISOString(),
-        originalBytes: before.size,
+        originalBytes,
         compressedBytes,
         compression: "gzip",
         sha256: checksum,
