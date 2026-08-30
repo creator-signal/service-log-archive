@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { closeSync, openSync, writeSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
@@ -111,6 +112,46 @@ test("rename/create rotations preserve synthetic events exactly once and archive
   assert.notEqual(firstManifest.segmentId, secondManifest.segmentId);
   assert.equal((await readFile(active, "utf8")), "");
   assert.equal(store.snapshot().segments.every((segment) => segment.status === "completed"), true);
+  assert.equal((await engine.verifyRestore("test:operator")).result, "passed");
+});
+
+test("rename/create manifests the exact stable inode when a producer writes during reopen", async () => {
+  const { directories, config, store } = await fixture();
+  const active = path.join(directories.logs, "reopen-race.log");
+  const initial = "event-before-rename\n";
+  const duringReopen = "event-during-reopen\n";
+  await writeFile(active, initial, { mode: 0o640 });
+  const producer = openSync(active, "a");
+  const signals = [];
+  const engine = new RotationEngine(config, store, {
+    s3: { enabled: false },
+    signaler: (pid, signal) => {
+      signals.push({ pid, signal });
+      writeSync(producer, duringReopen);
+    },
+  });
+  let manifest;
+  try {
+    await engine.createSource({
+      id: "reopen-race",
+      path: active,
+      strategy: "rename-create",
+      maxBytes: 1,
+      intervalSeconds: 0,
+      reopenPid: 42,
+      reopenSignal: "SIGHUP",
+    }, "test");
+    manifest = await engine.rotate("reopen-race", "test");
+  } finally {
+    closeSync(producer);
+  }
+
+  const archivedDirectory = path.join(directories.archive, "reopen-race");
+  const compressed = (await readdir(archivedDirectory)).find((name) => name.endsWith(".log.gz"));
+  assert.ok(compressed);
+  assert.deepEqual(signals, [{ pid: 42, signal: "SIGHUP" }]);
+  assert.equal(manifest.originalBytes, Buffer.byteLength(`${initial}${duringReopen}`));
+  assert.equal(gunzipSync(await readFile(path.join(archivedDirectory, compressed))).toString("utf8"), `${initial}${duringReopen}`);
   assert.equal((await engine.verifyRestore("test:operator")).result, "passed");
 });
 

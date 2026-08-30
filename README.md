@@ -4,7 +4,7 @@
 
 It runs as one non-root container. Consumers explicitly mount managed log files/directories, durable state, a bounded spool, an archive directory, and runtime authentication material. The service does not discover host paths, mount paths dynamically, read a Docker socket, or contain Creator Signal deployment configuration.
 
-> Status: `0.2.0` release candidate. Local filesystem archival is the default; optional S3-compatible archival is enabled only through explicit endpoint, bucket, prefix, and file-backed credential configuration.
+> Status: `0.2.1` release candidate. Local filesystem archival is the default; optional S3-compatible archival is enabled only through explicit endpoint, bucket, prefix, and file-backed credential configuration.
 
 ## Capabilities
 
