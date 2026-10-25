@@ -77,6 +77,11 @@ paths:
     post:
       operationId: verifyRestore
       x-required-role: operator
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { segmentId: { type: string, format: uuid } } }
       responses:
         "201": { description: Non-destructive restore verification passed, content: { application/json: { schema: { type: object } } } }
         default: { $ref: "#/components/responses/Problem" }
@@ -132,6 +137,8 @@ components:
         maxBytes: { type: integer, minimum: 0, default: 0 }
         intervalSeconds: { type: integer, minimum: 0, maximum: 31536000, default: 86400 }
         compressionLevel: { type: integer, minimum: 1, maximum: 9, default: 6 }
+        format: { type: string, enum: [text, jsonl], default: text }
+        reopenTimeoutMs: { type: integer, minimum: 25, maximum: 60000, default: 5000 }
         reopenUrl: { type: [string, "null"], format: uri }
         reopenSignal: { type: [string, "null"], enum: [SIGHUP, SIGUSR1, SIGUSR2, null] }
         reopenPid: { type: [integer, "null"], minimum: 1 }
@@ -161,6 +168,7 @@ components:
         originalBytes: { type: integer }
         compressedBytes: { type: integer }
         compression: { type: string, const: gzip }
+        format: { type: string, enum: [text, jsonl] }
         sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
         warning: { type: [string, "null"] }
       required: [schemaVersion, segmentId, sourceId, rotatedAt, originalBytes, compressedBytes, compression, sha256]

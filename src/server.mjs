@@ -63,7 +63,9 @@ export function createLogArchiveServer({ config, store, auth, engine, logger = c
       }
       if (request.method === "POST" && url.pathname === "/api/v1/restore-verifications") {
         if (!auth.authorize(identity, "operator")) return forbidden(response);
-        return sendJson(response, 201, await engine.verifyRestore(identity.subject, correlationId));
+        const input=Number(request.headers['content-length']??0)>0||request.headers['transfer-encoding']?await body(request,config.requestMaxBytes):{};
+        if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>key!=='segmentId'))throw Object.assign(new Error('Invalid restore request'),{status:400});
+        return sendJson(response, 201, await engine.verifyRestore(identity.subject, correlationId,input.segmentId));
       }
       if (request.method === "GET" && url.pathname === "/api/v1/audit") {
         if (!auth.authorize(identity, "viewer")) return forbidden(response);
@@ -135,6 +137,21 @@ function sendMetrics(response, status) {
     "# HELP log_archive_destination_healthy Whether the configured archive destination has no known failure.",
     "# TYPE log_archive_destination_healthy gauge",
     `log_archive_destination_healthy ${status.destinationHealth.status === "healthy" ? 1 : 0}`,
+    '# TYPE log_archive_spool_max_bytes gauge',
+    `log_archive_spool_max_bytes ${status.spool.maxBytes}`,
+    '# TYPE log_archive_spool_oldest_age_seconds gauge',
+    `log_archive_spool_oldest_age_seconds ${status.spool.oldestAt?Math.max(0,(Date.now()-Date.parse(status.spool.oldestAt))/1000):0}`,
+    '# TYPE log_archive_rotation_pending gauge',
+    `log_archive_rotation_pending ${status.rotations.pending}`,
+    '# TYPE log_archive_rotation_failures gauge',
+    `log_archive_rotation_failures ${status.rotations.failures}`,
+    '# TYPE log_archive_restore_age_seconds gauge',
+    `log_archive_restore_age_seconds ${status.restoreAgeSeconds??-1}`,
+    ...status.sources.flatMap(source=>[
+      `log_archive_source_enabled{source=${JSON.stringify(source.id)}} ${source.enabled?1:0}`,
+      `log_archive_source_bytes{source=${JSON.stringify(source.id)}} ${source.activeBytes??-1}`,
+      `log_archive_source_last_rotation_timestamp_seconds{source=${JSON.stringify(source.id)}} ${source.lastRotationAt?Date.parse(source.lastRotationAt)/1000:0}`,
+    ]),
     "",
   ];
   response.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });

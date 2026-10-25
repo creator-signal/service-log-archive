@@ -44,6 +44,7 @@ export async function loadConfig(env = process.env) {
     oidcRoleClaim: env.LOG_ARCHIVE_OIDC_ROLE_CLAIM || "log_archive_role",
     schedulerIntervalMs: integer(env.LOG_ARCHIVE_SCHEDULER_INTERVAL_SECONDS, 15) * 1000,
     spoolMaxBytes: integer(env.LOG_ARCHIVE_SPOOL_MAX_BYTES, 1024 * 1024 * 1024),
+    archiveMaxBytes:integer(env.LOG_ARCHIVE_ARCHIVE_MAX_BYTES,integer(env.LOG_ARCHIVE_SPOOL_MAX_BYTES,1024*1024*1024)),
     historyLimit: integer(env.LOG_ARCHIVE_HISTORY_LIMIT, 500),
     requestMaxBytes: integer(env.LOG_ARCHIVE_REQUEST_MAX_BYTES, 64 * 1024),
     rateLimitPerMinute: integer(env.LOG_ARCHIVE_RATE_LIMIT_PER_MINUTE, 120),
