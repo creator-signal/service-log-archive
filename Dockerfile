@@ -17,7 +17,7 @@ LABEL org.opencontainers.image.title="service-log-archive" \
       org.opencontainers.image.revision="$REVISION"
 RUN addgroup -S -g 10001 logarchive \
     && adduser -S -D -H -u 10001 -G logarchive logarchive \
-    && apk add --no-cache openssl=3.5.8-r0 libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
+    && apk add --no-cache openssl=3.5.9-r0 libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
         /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
     && mkdir -p /var/lib/log-archive/state /var/lib/log-archive/spool /var/lib/log-archive/archive /logs \
