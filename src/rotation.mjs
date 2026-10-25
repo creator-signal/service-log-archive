@@ -36,12 +36,15 @@ export class RotationEngine {
   #store;
   #locks = new Set();
   #timer;
+  #scheduled;
   #s3;
   #signaler;
   #producer;
   #checkpoint;
   #archiveLocks=new Map();
   #restoring=false;
+  #restoreReserved=0;
+  #cacheQueue=Promise.resolve();
 
   constructor(config, store, { s3 = new S3Archive(config), signaler = process.kill, producer=pidProducer, checkpoint=async()=>{} } = {}) {
     this.#config = config;
@@ -53,12 +56,19 @@ export class RotationEngine {
 
   async start() {
     await this.retryPending("system:startup");
-    this.#timer = setInterval(() => this.tick().catch((error) => this.#recordSystemFailure(error)), this.#config.schedulerIntervalMs);
+    this.#timer = setInterval(() => {
+      if(this.#scheduled)return;
+      this.#scheduled=this.tick().catch(async error=>{
+        try{await this.#recordSystemFailure(error);}catch{console.error(JSON.stringify({event:'scheduler.state_unavailable'}));}
+      }).finally(()=>{this.#scheduled=undefined;});
+    },this.#config.schedulerIntervalMs);
     this.#timer.unref();
   }
 
-  stop() {
+  async stop() {
     clearInterval(this.#timer);
+    await this.#scheduled;
+    await this.#cacheQueue.catch(()=>{});
   }
 
   async listSources() {
@@ -141,7 +151,7 @@ export class RotationEngine {
       const usage=await directoryBytes(this.#config.spoolDir);
       await this.#store.mutate(state=>{
         const reservations=state.rotations.reduce((sum,row)=>sum+row.reservedBytes,0);
-        if(usage+reservations+intent.reservedBytes>this.#config.spoolMaxBytes)throw conflict('Spool capacity would be exceeded');
+        if(usage+reservations+this.#restoreReserved+intent.reservedBytes>this.#config.spoolMaxBytes)throw conflict('Spool capacity would be exceeded');
         state.rotations.push(intent);
       });
       await this.#checkpoint('reserved');
@@ -229,7 +239,7 @@ export class RotationEngine {
       for(const filename of [files.rawPath,files.rawPath+'.next',files.compressedPath,files.compressedPath+'.next',files.manifestPath])await removeOwnedPartial(filename);
       const usage=await directoryBytes(this.#config.spoolDir);
       const other=this.#store.snapshot().rotations.filter(row=>row.segmentId!==intent.segmentId).reduce((sum,row)=>sum+row.reservedBytes,0);
-      if(usage+other+workingBytes(stableBefore.size)>this.#config.spoolMaxBytes)throw conflict('Spool capacity would be exceeded after producer handoff');
+      if(usage+other+this.#restoreReserved+workingBytes(stableBefore.size)>this.#config.spoolMaxBytes)throw conflict('Spool capacity would be exceeded after producer handoff');
       const partial=files.rawPath+'.next';await removeOwnedPartial(partial);
       await copyFile(files.stagingPath,partial,constants.COPYFILE_EXCL);await syncFile(partial);
       const stableAfter=await stat(files.stagingPath);
@@ -283,7 +293,8 @@ export class RotationEngine {
 
   async archiveSegment(segmentId){
     if(this.#archiveLocks.has(segmentId))return this.#archiveLocks.get(segmentId);
-    const operation=this.#archiveSegment(segmentId);
+    const operation=this.#cacheQueue.catch(()=>{}).then(()=>this.#archiveSegment(segmentId));
+    this.#cacheQueue=operation;
     this.#archiveLocks.set(segmentId,operation);
     try{return await operation;}finally{this.#archiveLocks.delete(segmentId);}
   }
@@ -305,9 +316,7 @@ export class RotationEngine {
       // v1 could remove all local copies before committing upload completion.
       if(!await optionalFile(segment.compressedPath)&&!cached){
         if(!this.#s3.enabled)throw new Error('Archive bytes unavailable; reconciliation denied');
-        const manifest={};
-        for(const key of ['schemaVersion','segmentId','sourceId','sourcePath','rotatedAt','originalBytes','compressedBytes','compression','sha256','format'])if(segment[key]!==undefined)manifest[key]=segment[key];
-        const bytes=Buffer.from(JSON.stringify(manifest,null,2)+'\n');
+        const bytes=manifestBytes(segment);
         const compressed=await this.#s3.verify(this.#s3.key(segment.sourceId,segment.compressedPath),segment.sha256,segment.compressedBytes);
         const remoteManifest=await this.#s3.verify(this.#s3.key(segment.sourceId,segment.manifestPath),createHash('sha256').update(bytes).digest('hex'),bytes.length);
         await this.#completeArchive(segmentId,{compressed,manifest:remoteManifest});
@@ -315,8 +324,8 @@ export class RotationEngine {
         return;
       }
       await copyOrVerify(segment.compressedPath,compressedDestination,segment.sha256);
-      if(!await optionalFile(segment.manifestPath)&&cachedManifest)await copyOrVerify(manifestDestination,segment.manifestPath,await sha256File(manifestDestination));
-      const manifestChecksum=await sha256File(segment.manifestPath);
+      const manifestChecksum=createHash('sha256').update(manifestBytes(segment)).digest('hex');
+      if(!await optionalFile(segment.manifestPath)&&cachedManifest)await copyOrVerify(manifestDestination,segment.manifestPath,manifestChecksum);
       await copyOrVerify(segment.manifestPath,manifestDestination,manifestChecksum);
       let remote=null;
       if(this.#s3.enabled){
@@ -374,7 +383,7 @@ export class RotationEngine {
   async verifyRestore(actor, correlationId = randomUUID(),segmentId) {
     if(this.#restoring)throw conflict('A restore verification is already running');
     this.#restoring=true;
-    try{return await this.#verifyRestore(actor,correlationId,segmentId);}finally{this.#restoring=false;}
+    try{return await this.#verifyRestore(actor,correlationId,segmentId);}finally{this.#restoring=false;this.#restoreReserved=0;}
   }
 
   async #verifyRestore(actor,correlationId,segmentId){
@@ -385,8 +394,11 @@ export class RotationEngine {
     const downloaded = path.join(this.#config.spoolDir, `.restore-${completed.segmentId}.gz`);
     const temporary = path.join(this.#config.spoolDir, `.restore-${completed.segmentId}.tmp`);
     try {
+      if(!Number.isSafeInteger(completed.originalBytes)||!Number.isSafeInteger(completed.compressedBytes)||completed.originalBytes<0||completed.compressedBytes<0)throw conflict('Restore working space exceeds spool bound');
+      this.#restoreReserved=completed.originalBytes+completed.compressedBytes;
       const usage=await directoryBytes(this.#config.spoolDir);
-      if(!Number.isSafeInteger(completed.originalBytes)||!Number.isSafeInteger(completed.compressedBytes)||completed.originalBytes<0||completed.compressedBytes<0||usage+completed.originalBytes+completed.compressedBytes>this.#config.spoolMaxBytes)throw conflict('Restore working space exceeds spool bound');
+      const reservations=this.#store.snapshot().rotations.reduce((sum,row)=>sum+row.reservedBytes,0);
+      if(!Number.isSafeInteger(completed.originalBytes)||!Number.isSafeInteger(completed.compressedBytes)||completed.originalBytes<0||completed.compressedBytes<0||usage+reservations+this.#restoreReserved>this.#config.spoolMaxBytes)throw conflict('Restore working space exceeds spool bound');
       await removeOwnedPartial(downloaded);await removeOwnedPartial(temporary);
       if (completed.destination === "s3") {
         archived = await this.#s3.download(completed.remote.compressed.key, downloaded, completed.sha256,completed.compressedBytes);
@@ -450,8 +462,8 @@ export class RotationEngine {
     try {
       file = await stat(source.path);
       health = source.enabled ? "healthy" : "disabled";
-    } catch (error) {
-      if (error.code !== "ENOENT") health = "critical";
+    } catch {
+      health = "critical";
     }
     const executions = state.executions.filter((entry) => entry.sourceId === source.id).slice(-20).reverse();
     const pending = state.segments.filter((segment) => segment.sourceId === source.id && segment.status !== "completed");
@@ -547,13 +559,25 @@ const boundedInteger = (value, fallback, minimum, maximum) => {
   return parsed;
 };
 
-async function copyOrVerify(source, destination, checksum) {
-  try {
-    await copyFile(source, destination, constants.COPYFILE_EXCL);
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    if ((await sha256File(destination)) !== checksum) throw new Error("Immutable archive destination already exists with different content");
+function manifestBytes(segment){
+  const manifest={};
+  for(const key of ['schemaVersion','segmentId','sourceId','sourcePath','rotatedAt','originalBytes','compressedBytes','compression','sha256','format'])if(segment[key]!==undefined)manifest[key]=segment[key];
+  return Buffer.from(JSON.stringify(manifest,null,2)+'\n');
+}
+
+async function copyOrVerify(source,destination,checksum){
+  const present=await optionalFile(destination);
+  if(!present){
+    const origin=await optionalFile(source);
+    if(!origin||origin.nlink!==1)throw new Error('Archive source custody differs');
+    if(await sha256File(source)!==checksum)throw new Error('Archive source checksum differs from ledger');
+    try{await copyFile(source,destination,constants.COPYFILE_EXCL);}
+    catch(error){if(error.code!=='EEXIST')throw error;}
   }
+  const copied=await optionalFile(destination);
+  if(!copied||copied.nlink!==1)throw new Error('Archive destination custody differs');
+  if(await sha256File(destination)!==checksum)throw new Error('Immutable archive destination already exists with different content');
+  await syncFile(destination);await syncDirectory(path.dirname(destination));
 }
 
 async function directoryBytes(directory) {

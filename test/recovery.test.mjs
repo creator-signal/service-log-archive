@@ -82,8 +82,8 @@ test('native delayed signal reopen preserves continuous numbered events across n
  const engine=new RotationEngine(f.config,f.store);t.after(()=>engine.stop());
  await engine.createSource({...f.source,maxBytes:10000000,intervalSeconds:1,reopenPid:child.pid,reopenSignal:'SIGHUP',reopenTimeoutMs:2000},'test');await engine.start();
  const wait=async predicate=>{const deadline=Date.now()+10000;while(!predicate()){if(Date.now()>deadline)assert.fail('native producer rotation timed out');await new Promise(r=>setTimeout(r,30));}};
- await wait(()=>f.store.snapshot().segments.length>=1);await engine.updateSource('synthetic',{...f.source,maxBytes:128,intervalSeconds:0,reopenPid:child.pid,reopenSignal:'SIGHUP',reopenTimeoutMs:2000},'test');
- await wait(()=>f.store.snapshot().segments.length>=2);engine.stop();const countPromise=once(child,'message');child.send('stop');const [{count}]=await countPromise;await once(child,'exit');
+ await wait(()=>f.store.snapshot().segments.some(s=>s.status==='completed')&&f.store.snapshot().rotations.length===0);await engine.updateSource('synthetic',{...f.source,maxBytes:128,intervalSeconds:0,reopenPid:child.pid,reopenSignal:'SIGHUP',reopenTimeoutMs:2000},'test');
+ await wait(()=>f.store.snapshot().segments.filter(s=>s.status==='completed').length>=2);await engine.stop();const countPromise=once(child,'message');child.send('stop');const [{count}]=await countPromise;await once(child,'exit');
  const events=[];for(const segment of f.store.snapshot().segments)events.push(...gunzipSync(await readFile(path.join(f.dirs.archive,'synthetic',path.basename(segment.compressedPath)))).toString().trim().split('\n').filter(Boolean).map(s=>JSON.parse(s).n));
  events.push(...(await readFile(f.active,'utf8')).trim().split('\n').filter(Boolean).map(s=>JSON.parse(s).n));
  assert.deepEqual(events.sort((a,b)=>a-b),Array.from({length:count},(_,n)=>n));
@@ -112,4 +112,14 @@ test('invalid JSONL fails restore verification and records failure without retai
  await assert.rejects(engine.verifyRestore('test'),/JSONL record is invalid/);
  assert.equal(f.store.snapshot().restoreVerifications.at(-1).result,'failed');
  assert.equal((await readdir(f.dirs.spool)).filter(n=>n.startsWith('restore-')).length,0);
+});
+
+
+for(const artifact of ['compressedPath','manifestPath'])test(`corrupt ${artifact} is retained and denied before first archive admission`,async t=>{
+ const f=await fixture(t);const engine=new RotationEngine(f.config,f.store,{checkpoint:async phase=>{if(phase==='rotation-cleaned')throw new Error('pause before archive');}});
+ await engine.createSource(f.source,'test');await assert.rejects(engine.rotate('synthetic','test'),/pause before archive/);
+ const segment=f.store.snapshot().segments[0];await writeFile(segment[artifact],'synthetic corruption');
+ const recovered=new RotationEngine(f.config,f.store);const outcomes=await recovered.retryPending('test');
+ assert.equal(outcomes[0].result,'failed');assert.match(outcomes[0].error,/checksum/);
+ assert.equal(f.store.snapshot().segments[0].status,'failed');assert.equal(await readFile(segment[artifact],'utf8'),'synthetic corruption');
 });

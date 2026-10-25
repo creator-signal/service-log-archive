@@ -4,6 +4,11 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and s
 
 ## [Unreleased]
 
+## [0.3.1]
+
+- Verify newly copied gzip and manifest bytes against the durable ledger before archive admission; fsync local acceptance.
+- Serialize archive-cache admission and reserve restore capacity against concurrent rotations.
+
 ## [0.3.0]
 
 - Journal rotation phases before file changes; verify producer reopen before completing capture or removing the old inode.
