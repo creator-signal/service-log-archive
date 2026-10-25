@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -35,13 +35,26 @@ test("real S3-compatible endpoint accepts, verifies, retries, and restores an im
   await store.load();
   const engine = new RotationEngine(config, store);
   const active = path.join(directories.logs, "minio.log");
-  await writeFile(active, "minio-event-1\nminio-event-2\n");
+  await writeFile(active, '{"n":0}\n{"n":1}\n');
   try {
-    await engine.createSource({ id: "minio-log", path: active, maxBytes: 1, intervalSeconds: 0 }, "acceptance");
-    await engine.rotate("minio-log", "acceptance");
+    await engine.createSource({ id: "minio-log", path: active, maxBytes: 1, intervalSeconds: 0, format:"jsonl" }, "acceptance");
+    // Credential replacement is consumed on the next request, without restart.
+    await writeFile(accessFile, 'invalid-synthetic-access');
+    await assert.rejects(engine.rotate("minio-log", "acceptance"), /S3 immutable upload failed/);
+    assert.equal(store.snapshot().segments.at(-1).status,'failed');
+    assert.ok((await engine.status()).spool.bytes>0);
+    await writeFile(accessFile,process.env.MINIO_ACCEPTANCE_ACCESS_KEY);
+    assert.equal((await engine.retryPending('acceptance'))[0].result,'completed');
     assert.equal(store.snapshot().segments.at(-1).destination, "s3");
     assert.equal((await engine.retryPending("acceptance")).length, 0);
-    assert.equal((await engine.verifyRestore("acceptance")).result, "passed");
+    const segment=store.snapshot().segments.at(-1);
+    const proof=await engine.verifyRestore("acceptance",undefined,segment.segmentId);
+    assert.equal(proof.result, "passed");assert.equal(proof.restoredRecords,2);
+    // Restore control state into a clean directory, with no local archive bytes.
+    const clean=path.join(root,'restored-control');await mkdir(clean);
+    await writeFile(path.join(clean,'state.json'),await readFile(path.join(directories.state,'state.json')));
+    const recovered=new StateStore({...config,dataDir:clean});await recovered.load();
+    assert.equal((await new RotationEngine(config,recovered).verifyRestore('acceptance')).result,'passed');
     assert.equal((await engine.status()).spool.pending, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
