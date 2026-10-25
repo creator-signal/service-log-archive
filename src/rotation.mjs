@@ -36,6 +36,7 @@ export class RotationEngine {
   #store;
   #locks = new Set();
   #timer;
+  #scheduled;
   #s3;
   #signaler;
   #producer;
@@ -55,12 +56,19 @@ export class RotationEngine {
 
   async start() {
     await this.retryPending("system:startup");
-    this.#timer = setInterval(() => this.tick().catch((error) => this.#recordSystemFailure(error)), this.#config.schedulerIntervalMs);
+    this.#timer = setInterval(() => {
+      if(this.#scheduled)return;
+      this.#scheduled=this.tick().catch(async error=>{
+        try{await this.#recordSystemFailure(error);}catch{console.error(JSON.stringify({event:'scheduler.state_unavailable'}));}
+      }).finally(()=>{this.#scheduled=undefined;});
+    },this.#config.schedulerIntervalMs);
     this.#timer.unref();
   }
 
-  stop() {
+  async stop() {
     clearInterval(this.#timer);
+    await this.#scheduled;
+    await this.#cacheQueue.catch(()=>{});
   }
 
   async listSources() {
@@ -454,8 +462,8 @@ export class RotationEngine {
     try {
       file = await stat(source.path);
       health = source.enabled ? "healthy" : "disabled";
-    } catch (error) {
-      if (error.code !== "ENOENT") health = "critical";
+    } catch {
+      health = "critical";
     }
     const executions = state.executions.filter((entry) => entry.sourceId === source.id).slice(-20).reverse();
     const pending = state.segments.filter((segment) => segment.sourceId === source.id && segment.status !== "completed");

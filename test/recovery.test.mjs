@@ -82,8 +82,8 @@ test('native delayed signal reopen preserves continuous numbered events across n
  const engine=new RotationEngine(f.config,f.store);t.after(()=>engine.stop());
  await engine.createSource({...f.source,maxBytes:10000000,intervalSeconds:1,reopenPid:child.pid,reopenSignal:'SIGHUP',reopenTimeoutMs:2000},'test');await engine.start();
  const wait=async predicate=>{const deadline=Date.now()+10000;while(!predicate()){if(Date.now()>deadline)assert.fail('native producer rotation timed out');await new Promise(r=>setTimeout(r,30));}};
- await wait(()=>f.store.snapshot().segments.length>=1);await engine.updateSource('synthetic',{...f.source,maxBytes:128,intervalSeconds:0,reopenPid:child.pid,reopenSignal:'SIGHUP',reopenTimeoutMs:2000},'test');
- await wait(()=>f.store.snapshot().segments.length>=2);engine.stop();const countPromise=once(child,'message');child.send('stop');const [{count}]=await countPromise;await once(child,'exit');
+ await wait(()=>f.store.snapshot().segments.some(s=>s.status==='completed')&&f.store.snapshot().rotations.length===0);await engine.updateSource('synthetic',{...f.source,maxBytes:128,intervalSeconds:0,reopenPid:child.pid,reopenSignal:'SIGHUP',reopenTimeoutMs:2000},'test');
+ await wait(()=>f.store.snapshot().segments.filter(s=>s.status==='completed').length>=2);await engine.stop();const countPromise=once(child,'message');child.send('stop');const [{count}]=await countPromise;await once(child,'exit');
  const events=[];for(const segment of f.store.snapshot().segments)events.push(...gunzipSync(await readFile(path.join(f.dirs.archive,'synthetic',path.basename(segment.compressedPath)))).toString().trim().split('\n').filter(Boolean).map(s=>JSON.parse(s).n));
  events.push(...(await readFile(f.active,'utf8')).trim().split('\n').filter(Boolean).map(s=>JSON.parse(s).n));
  assert.deepEqual(events.sort((a,b)=>a-b),Array.from({length:count},(_,n)=>n));
