@@ -4,7 +4,7 @@
 
 It runs as one non-root container. Consumers explicitly mount managed log files/directories, durable state, a bounded spool, an archive directory, and runtime authentication material. The service does not discover host paths, mount paths dynamically, read a Docker socket, or contain Creator Signal deployment configuration.
 
-> Status: `0.2.1` release candidate. Local filesystem archival is the default; optional S3-compatible archival is enabled only through explicit endpoint, bucket, prefix, and file-backed credential configuration.
+> Status: published `0.3.1` release. Local filesystem archival is the default; optional S3-compatible archival is enabled only through explicit endpoint, bucket, prefix, and file-backed credential configuration.
 
 ## Capabilities
 
@@ -12,7 +12,7 @@ It runs as one non-root container. Consumers explicitly mount managed log files/
 - preferred rename/create rotation with an optional, loopback-only reopen callback;
 - explicit-risk `copytruncate` compatibility mode;
 - gzip compression, SHA-256 manifests, UTC-sortable immutable names;
-- optional SigV4 S3-compatible upload with exclusive creation, metadata/size verification, file-backed credentials, and restore download verification;
+- optional SigV4 S3-compatible upload with exclusive creation, independent streamed byte/checksum verification, file-backed credentials, and restore download verification;
 - separately mounted, capacity-bounded spool, state, and archive paths;
 - idempotent archive retry and non-destructive restore verification;
 - durable source policies, execution history, segment state, audit history, and schema version;
@@ -23,6 +23,8 @@ It runs as one non-root container. Consumers explicitly mount managed log files/
 - non-root, read-only-root container with all Linux capabilities dropped in the Compose example.
 
 Raw log contents are never available through the API, UI, metrics, or service logs.
+
+The default Compose example pins the [v0.3.1 release](https://github.com/creator-signal/service-log-archive/releases/tag/v0.3.1) by immutable digest. Its schema-2 ledger accepts schema 1 through the documented additive migration; rollback requires the matching pre-upgrade state snapshot.
 
 ## Quick start
 

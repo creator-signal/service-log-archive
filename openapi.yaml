@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Log Archive API
-  version: 0.2.0
+  version: 0.3.1
   description: Provider-neutral management API. Raw log and credential contents are never returned.
 servers:
   - url: /
