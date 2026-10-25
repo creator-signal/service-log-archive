@@ -113,3 +113,13 @@ test('invalid JSONL fails restore verification and records failure without retai
  assert.equal(f.store.snapshot().restoreVerifications.at(-1).result,'failed');
  assert.equal((await readdir(f.dirs.spool)).filter(n=>n.startsWith('restore-')).length,0);
 });
+
+
+for(const artifact of ['compressedPath','manifestPath'])test(`corrupt ${artifact} is retained and denied before first archive admission`,async t=>{
+ const f=await fixture(t);const engine=new RotationEngine(f.config,f.store,{checkpoint:async phase=>{if(phase==='rotation-cleaned')throw new Error('pause before archive');}});
+ await engine.createSource(f.source,'test');await assert.rejects(engine.rotate('synthetic','test'),/pause before archive/);
+ const segment=f.store.snapshot().segments[0];await writeFile(segment[artifact],'synthetic corruption');
+ const recovered=new RotationEngine(f.config,f.store);const outcomes=await recovered.retryPending('test');
+ assert.equal(outcomes[0].result,'failed');assert.match(outcomes[0].error,/checksum/);
+ assert.equal(f.store.snapshot().segments[0].status,'failed');assert.equal(await readFile(segment[artifact],'utf8'),'synthetic corruption');
+});
