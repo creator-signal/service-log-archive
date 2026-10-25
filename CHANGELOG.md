@@ -4,6 +4,17 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and s
 
 ## [Unreleased]
 
+## [0.3.0]
+
+- Journal rotation phases before file changes; verify producer reopen before completing capture or removing the old inode.
+- Persist archive completion before cleanup and recover interrupted immutable uploads and cleanup.
+- Recover the state write queue after rejected operations; fsync atomic state publication and migrate schema 1 to schema 2.
+- Bound raw/gzip/cache/restore working space, stream S3 transfers and verify remote bytes independently.
+- Support selected-segment restore and bounded JSONL verification; expose rotation, source, spool and restore-age metrics.
+- Keep interrupted copytruncate fail-closed rather than repeating destructive truncation.
+
+
+
 ## [0.2.0] - 2026-08-01
 
 ### Added

@@ -17,7 +17,13 @@ For S3-compatible destinations, confirm endpoint/CA reachability, bucket/prefix 
 
 ## Reopen failure
 
-The rotation completes with a warning because the old segment is already preserved. Confirm the producer opened the replacement path before accepting further writes. Fix the callback/producer configuration and run a synthetic continuity test.
+Rotation fails closed and retains the original inode plus its durable intent. It cannot start another rotation for that source until recovery completes. Fix the producer/reopen configuration and use archive retry (also invoked during startup and scheduler recovery). Never remove retained rotating files manually. Linux signal adapters verify the configured producer's process identity and file descriptors: the replacement must be open and the old inode closed before capture and cleanup. A loopback callback must return `{ "reopened": true, "segmentId": "<the submitted segmentId>" }` only after the same handoff is complete. A successful signal syscall alone is not an acknowledgement.
+
+## Capacity and integrity
+
+The spool reserves a conservative raw-plus-gzip working bound, including compression overhead and metadata, before renaming. An oversized initial file is rejected without mutation; plan its finite working capacity before adoption rather than truncating it. `LOG_ARCHIVE_ARCHIVE_MAX_BYTES` independently bounds the archive cache (default: spool limit). S3 transfers stream bytes and independently GET/checksum-verify accepted objects before cleanup. Source `format: jsonl` additionally validates restored UTF-8 JSON objects with a bounded 1 MiB line limit. Restore working space is admitted against the spool bound.
+
+Archive completion is durably recorded before cleanup. Restart recovery reconciles retained rotation phases and retries immutable uploads; completed entries with pending cleanup are safe to replay. Explicit copytruncate remains lossy and an interrupted truncate is quarantined for operator reconciliation, never blindly repeated.
 
 ## State backup and restore
 

@@ -7,3 +7,5 @@ spool/
 archive/
 fixtures/logs/*.log
 examples/compose/logs/*.log
+
+.tmp/

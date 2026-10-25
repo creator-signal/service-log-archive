@@ -125,7 +125,7 @@ test("rename/create manifests the exact stable inode when a producer writes duri
   const signals = [];
   const engine = new RotationEngine(config, store, {
     s3: { enabled: false },
-    signaler: (pid, signal) => {
+    producer:{capture:async()=>({start:"synthetic"}),verify:async()=>({start:"synthetic"})},signaler: (pid, signal) => {
       signals.push({ pid, signal });
       writeSync(producer, duringReopen);
     },
@@ -160,7 +160,7 @@ test("fixed PID signal adapter invokes only an allowlisted reopen signal", async
   const active = path.join(directories.logs, "signal.log");
   await writeFile(active, "signal-event\n");
   const signals = [];
-  const engine = new RotationEngine(config, store, { s3: { enabled: false }, signaler: (pid, signal) => signals.push({ pid, signal }) });
+  const engine = new RotationEngine(config, store, { s3: { enabled: false }, producer:{capture:async()=>({start:"synthetic"}),verify:async()=>({start:"synthetic"})},signaler: (pid, signal) => signals.push({ pid, signal }) });
   await engine.createSource({ id: "signal-log", path: active, maxBytes: 1, intervalSeconds: 0, reopenPid: 42, reopenSignal: "SIGHUP" }, "test");
   await engine.rotate("signal-log", "test");
   assert.deepEqual(signals, [{ pid: 42, signal: "SIGHUP" }]);
@@ -279,6 +279,6 @@ test("HTTP API enforces role capabilities, CSP, bounded probes, and content-free
 });
 
 test("state migration fails closed on unknown schemas", () => {
-  assert.equal(migrate({ schemaVersion: 1, sources: [] }).schemaVersion, 1);
+  assert.equal(migrate({ schemaVersion: 1, sources: [] }).schemaVersion, 2);
   assert.throws(() => migrate({ schemaVersion: 999 }), /Unsupported state schema/);
 });

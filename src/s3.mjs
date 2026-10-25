@@ -1,5 +1,9 @@
 import { createHash, createHmac } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import {createReadStream,createWriteStream} from "node:fs";
+import {Readable,Transform} from "node:stream";
+import {pipeline} from "node:stream/promises";
+import {syncFile} from "./durable.mjs";
 import path from "node:path";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -20,29 +24,47 @@ export class S3Archive {
   async upload(file, sourceId, checksum, contentType) {
     if (!this.enabled) return null;
     const objectName = `${this.#config.prefix}/${sourceId}/${path.basename(file)}`;
-    const body = await readFile(file);
-    const metadata = { "content-type": contentType, "if-none-match": "*", "x-amz-meta-sha256": checksum };
-    let response = await this.#request("PUT", objectName, body, metadata);
-    if (!response.ok && response.status !== 412) throw new Error(await responseProblem("immutable upload", response));
-
-    response = await this.#request("HEAD", objectName, Buffer.alloc(0), {});
-    if (!response.ok) throw new Error(await responseProblem("verification", response));
-    if (response.headers.get("x-amz-meta-sha256") !== checksum) throw new Error("S3 checksum metadata does not match");
-    if (Number(response.headers.get("content-length")) !== (await stat(file)).size) throw new Error("S3 content length does not match");
-    return { key: objectName, etag: response.headers.get("etag"), verifiedAt: new Date().toISOString() };
+    const size=(await stat(file)).size;
+    const metadata = { "content-type": contentType, "if-none-match": "*", "x-amz-meta-sha256": checksum, "content-length":String(size) };
+    const body=createReadStream(file);
+    let response;
+    try{response=await this.#request("PUT",objectName,body,metadata,checksum);}
+    finally{body.destroy();}
+    if(!response.ok&&response.status!==412)throw new Error(await responseProblem('immutable upload',response));
+    await response.body?.cancel();
+    return this.verify(objectName,checksum,size);
   }
 
-  async download(objectName, destination, checksum) {
-    if (!this.enabled) throw new Error("S3 archive is not enabled");
-    const response = await this.#request("GET", objectName, Buffer.alloc(0), {});
-    if (!response.ok) throw new Error(await responseProblem("restore download", response));
-    const body = Buffer.from(await response.arrayBuffer());
-    if (hash(body) !== checksum) throw new Error("S3 restore checksum does not match manifest");
-    await writeFile(destination, body, { mode: 0o600, flag: "wx" });
+  async verify(objectName,checksum,size){
+    if(!this.enabled)throw new Error('S3 archive is not enabled');
+    this.#assertKey(objectName);
+    let response=await this.#request('HEAD',objectName,Buffer.alloc(0),{});
+    if(!response.ok)throw new Error(await responseProblem('verification',response));
+    if(response.headers.get('x-amz-meta-sha256')!==checksum||Number(response.headers.get('content-length'))!==size)throw new Error('S3 object metadata differs');
+    const etag=response.headers.get('etag');
+    response=await this.#request('GET',objectName,Buffer.alloc(0),{});
+    if(!response.ok)throw new Error(await responseProblem('byte verification',response));
+    await consumeVerified(response,checksum,size);
+    return {key:objectName,etag,verifiedAt:new Date().toISOString()};
+  }
+
+  key(sourceId,filename){return `${this.#config.prefix}/${sourceId}/${path.basename(filename)}`;}
+
+  #assertKey(objectName){
+    if(!objectName.startsWith(this.#config.prefix+'/')||objectName.split('/').some(part=>part==='.'||part==='..'))throw new Error('Archive key escaped configured prefix');
+  }
+
+  async download(objectName,destination,checksum,maximum=Number.MAX_SAFE_INTEGER){
+    if(!this.enabled)throw new Error('S3 archive is not enabled');
+    this.#assertKey(objectName);
+    const response=await this.#request('GET',objectName,Buffer.alloc(0),{});
+    if(!response.ok)throw new Error(await responseProblem('restore download',response));
+    await consumeVerified(response,checksum,maximum,createWriteStream(destination,{flags:'wx',mode:0o600}));
+    await syncFile(destination);
     return destination;
   }
 
-  async #request(method, objectName, body, additionalHeaders) {
+  async #request(method, objectName, body, additionalHeaders, knownHash) {
     const credentials = await this.#credentials();
     const endpoint = new URL(this.#config.endpoint);
     const canonicalUri = `${endpoint.pathname.replace(/\/$/, "")}/${encodePath(this.#config.bucket)}/${encodePath(objectName)}`.replace(/^([^/])/, "/$1");
@@ -53,7 +75,7 @@ export class S3Archive {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
     const date = amzDate.slice(0, 8);
-    const payloadHash = hash(body);
+    const payloadHash = knownHash ?? hash(body);
     const headers = {
       host: target.host,
       "x-amz-content-sha256": payloadHash,
@@ -73,7 +95,7 @@ export class S3Archive {
     const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
     headers.authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
     delete headers.host;
-    return this.#fetch(target, { method, headers, body: method === "PUT" ? body : undefined, signal: AbortSignal.timeout(30_000) });
+    return this.#fetch(target, { method, headers, body: method === "PUT" ? body : undefined, ...(method === "PUT" ? {duplex:"half"} : {}), signal: AbortSignal.timeout(30_000) });
   }
 
   async #credentials() {
@@ -87,8 +109,18 @@ export class S3Archive {
 }
 
 async function responseProblem(operation, response) {
-  const text = await response.text();
-  const code = text.match(/<Code>([^<]{1,100})<\/Code>/)?.[1];
-  const resource = text.match(/<Resource>([^<]{1,300})<\/Resource>/)?.[1];
-  return `S3 ${operation} failed with ${response.status}${code ? ` ${code}` : ""}${resource ? ` for ${resource}` : ""}`;
+  // Provider error bodies can contain private paths or arbitrary unbounded data.
+  await response.body?.cancel();
+  return `S3 ${operation} failed with ${response.status}`;
+}
+
+async function consumeVerified(response,checksum,maximum,destination){
+  if(!/^[a-f0-9]{64}$/.test(checksum))throw new Error('Invalid expected archive checksum');
+  const hash=createHash('sha256');let size=0;
+  if(!response.body)throw new Error('Archive response body missing');
+  const source=Readable.fromWeb(response.body);
+  const checked=new Transform({transform(chunk,encoding,callback){size+=chunk.length;if(size>maximum)return callback(new Error('Archive object exceeds expected bound'));hash.update(chunk);callback(null,chunk);}});
+  const sink=destination??new Transform({transform(chunk,encoding,callback){callback();}});
+  await pipeline(source,checked,sink);
+  if(hash.digest('hex')!==checksum)throw new Error('S3 byte checksum does not match manifest');
 }
