@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Log Archive API
-  version: 0.3.1
+  version: 0.3.2
   description: Provider-neutral management API. Raw log and credential contents are never returned.
 servers:
   - url: /
@@ -14,12 +14,14 @@ paths:
       security: []
       responses:
         "200": { description: Process is live, content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } } }
+        "503": { $ref: "#/components/responses/Problem" }
   /readyz:
     get:
       operationId: getReadiness
       security: []
       responses:
-        "200": { description: State store is loaded, content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } } }
+        "200": { description: State store is loaded and lifetime ownership is valid, content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } } }
+        "503": { $ref: "#/components/responses/Problem" }
   /api/v1/status:
     get:
       operationId: getStatus

@@ -26,6 +26,27 @@ jobs:
       - run: |
           docker run --rm --entrypoint /bin/sh service-log-archive:test -c \
             'test "$(id -u)" = 10001 && test "$(id -g)" = 10001'
+      - name: Prove kernel ownership in the actual non-root image
+        run: |
+          docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev,size=16m \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --entrypoint node service-log-archive:test --input-type=module -e '
+              import assert from "node:assert/strict";
+              import {mkdir,writeFile,readFile} from "node:fs/promises";
+              import {acquireRotationOwnership} from "/opt/log-archive/src/ownership.mjs";
+              const dataDir="/tmp/synthetic-owner";await mkdir(dataDir,{mode:0o700});
+              const owner=await acquireRotationOwnership({dataDir});
+              await assert.rejects(acquireRotationOwnership({dataDir}),{code:"ROTATION_OWNER_UNAVAILABLE"});
+              await owner.assertHeld();await owner.release();
+              const rotationLockFile=dataDir+"/external.lock";
+              await writeFile(rotationLockFile,"synthetic-stable-lock",{mode:0o400});
+              const config={dataDir,rotationLockFile,externalRotationLock:true};
+              const external=await acquireRotationOwnership(config);
+              await assert.rejects(acquireRotationOwnership(config),{code:"ROTATION_OWNER_UNAVAILABLE"});
+              await external.release();
+              assert.equal(await readFile(rotationLockFile,"utf8"),"synthetic-stable-lock");
+              console.log(JSON.stringify({kernelOwnership:true,readOnlyExternalLock:true,nonRoot:true}));
+            '
       - name: Run real MinIO adapter acceptance
         run: |
           set -euo pipefail

@@ -22,11 +22,12 @@
 | Compromised producer directory | Narrow mounts, service UID/GID, canonical path policy, no recursive discovery, no log execution. A producer with write access can still corrupt its own bytes; checksums detect change only after rotation. |
 | Spool exhaustion | Hard byte limit checked before rotation; warning/critical operational state; retry does not discard failures. Reserve filesystem capacity outside the service. |
 | Token brute force | High-entropy tokens, constant-time digest comparison, request-size limits, and per-address rate limiting. Put TLS and network policy at ingress. |
+| Concurrent service or cooperating legacy rotator | Exclusive lifetime kernel lock before migration/recovery, stable inode/custody checks, guarded queued mutations and request/engine drain before release. An external lock must be shared by every rotator on the same kernel. |
 | Compromised browser | Token lifetime is controlled by the issuer/operator and stored only in session storage. XSS surface is reduced by static same-origin assets and CSP. |
 
 ## Residual risks
 
 - `copytruncate` has inherent write-window loss/duplication risk and requires explicit acknowledgement.
 - A rename/create producer that ignores a failed reopen callback may continue writing the renamed inode; the service preserves the segment and reports a warning but cannot control that producer.
-- One instance owns each state/spool set; sharing writable volumes across replicas is unsupported.
+- One instance owns each state/spool set; a contender fails closed. This does not provide distributed locking or high availability, and an actor that ignores an advisory lock remains outside the supported coordination boundary.
 - Local archive storage is not off-site durability. Consumers must back it up or add a separately accepted remote adapter.

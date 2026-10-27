@@ -11,12 +11,13 @@ const staticFiles = new Map([
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
 ]);
 
-export function createLogArchiveServer({ config, store, auth, engine, logger = console }) {
+export function createLogArchiveServer({ config, store, auth, engine, logger = console, beforeRequest = async()=>{} }) {
   const limiter = new RateLimiter(config.rateLimitPerMinute);
   return createServer(async (request, response) => {
     const correlationId = request.headers["x-correlation-id"]?.slice(0, 100) || randomUUID();
     applyHeaders(response, correlationId);
     try {
+      await beforeRequest();
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
       if (!limiter.accept(request.socket.remoteAddress || "unknown")) return sendProblem(response, 429, "rate_limit", "Request rate limit exceeded");
 

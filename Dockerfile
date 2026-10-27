@@ -7,7 +7,7 @@ COPY public ./public
 RUN node --check src/index.mjs && node --check src/server.mjs && node --check public/app.js
 
 FROM node:24.15.0-alpine3.23@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f
-ARG VERSION=0.3.1
+ARG VERSION=0.3.2
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="service-log-archive" \
       org.opencontainers.image.description="Standalone log rotation, archival, API, and operator UI service" \
