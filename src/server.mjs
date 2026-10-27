@@ -10,13 +10,24 @@ const staticFiles = new Map([
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
 ]);
+const serverRequests=new WeakMap();
 
-export function createLogArchiveServer({ config, store, auth, engine, logger = console }) {
+// Call after server.close completes, so no further requests can enter. Socket
+// closure alone does not mean an asynchronous mutation handler has finished.
+export async function drainLogArchiveRequests(server) {
+  const requests=serverRequests.get(server);
+  if(!requests)throw new Error('Unknown log archive server');
+  while(requests.size)await Promise.allSettled([...requests]);
+}
+
+export function createLogArchiveServer({ config, store, auth, engine, logger = console, beforeRequest = async()=>{} }) {
   const limiter = new RateLimiter(config.rateLimitPerMinute);
-  return createServer(async (request, response) => {
+  const requests=new Set();
+  const handleRequest=async(request,response)=>{
     const correlationId = request.headers["x-correlation-id"]?.slice(0, 100) || randomUUID();
     applyHeaders(response, correlationId);
     try {
+      await beforeRequest();
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
       if (!limiter.accept(request.socket.remoteAddress || "unknown")) return sendProblem(response, 429, "rate_limit", "Request rate limit exceeded");
 
@@ -81,7 +92,14 @@ export function createLogArchiveServer({ config, store, auth, engine, logger = c
       if (status === 500) logger.error(JSON.stringify({ level: "error", event: "request.failed", correlationId, message: error.message }));
       return sendProblem(response, status, status === 500 ? "internal_error" : "request_rejected", status === 500 ? "Request failed" : error.message);
     }
+  };
+  const server=createServer((request,response)=>{
+    const pending=handleRequest(request,response);
+    requests.add(pending);
+    pending.finally(()=>requests.delete(pending)).catch(()=>{});
   });
+  serverRequests.set(server,requests);
+  return server;
 }
 
 async function body(request, maximum) {

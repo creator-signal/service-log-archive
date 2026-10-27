@@ -4,6 +4,12 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and s
 
 ## [Unreleased]
 
+## [0.3.2]
+
+- Acquire lifetime kernel ownership before ledger migration, recovery, scheduling and HTTP startup; retain it until requests and engine work drain.
+- Support an explicitly mounted, pre-existing read-only lock for consumer-owned coordination without creating, replacing or truncating it.
+- Deny changed lock custody at rotation, queued state mutations and readiness; emit bounded ownership-denied diagnostics.
+
 ## [0.3.1]
 
 - Verify newly copied gzip and manifest bytes against the durable ledger before archive admission; fsync local acceptance.

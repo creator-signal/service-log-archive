@@ -8,6 +8,9 @@ const integer = (value, fallback, minimum = 1) => {
 
 export async function loadConfig(env = process.env) {
   const dataDir = path.resolve(env.LOG_ARCHIVE_DATA_DIR || "/var/lib/log-archive/state");
+  const externalRotationLock=Boolean(env.LOG_ARCHIVE_ROTATION_LOCK_FILE);
+  const rotationLockFile=env.LOG_ARCHIVE_ROTATION_LOCK_FILE||path.join(dataDir,'.rotation-owner.lock');
+  if(!path.isAbsolute(rotationLockFile)||path.normalize(rotationLockFile)!==rotationLockFile)throw new Error('LOG_ARCHIVE_ROTATION_LOCK_FILE must be a canonical absolute path');
   const spoolDir = path.resolve(env.LOG_ARCHIVE_SPOOL_DIR || "/var/lib/log-archive/spool");
   const archiveDir = path.resolve(env.LOG_ARCHIVE_ARCHIVE_DIR || "/var/lib/log-archive/archive");
   const roots = (env.LOG_ARCHIVE_ALLOWED_ROOTS || "/logs")
@@ -35,6 +38,8 @@ export async function loadConfig(env = process.env) {
     host: env.LOG_ARCHIVE_HOST || "0.0.0.0",
     port: integer(env.LOG_ARCHIVE_PORT, 8080),
     dataDir,
+    rotationLockFile,
+    externalRotationLock,
     spoolDir,
     archiveDir,
     allowedRoots: canonicalRoots,

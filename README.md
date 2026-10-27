@@ -146,6 +146,7 @@ A failed reopen callback is recorded as a warning while the already-rotated segm
 | `LOG_ARCHIVE_PORT` | `8080` | HTTP port. |
 | `LOG_ARCHIVE_ALLOWED_ROOTS` | `/logs` | Comma-separated canonical mount roots. |
 | `LOG_ARCHIVE_DATA_DIR` | `/var/lib/log-archive/state` | Durable state mount. |
+| `LOG_ARCHIVE_ROTATION_LOCK_FILE` | `.rotation-owner.lock` inside the state directory | Optional canonical absolute path to an existing external ownership lock, opened read-only. Missing or unsafe external locks deny startup. |
 | `LOG_ARCHIVE_SPOOL_DIR` | `/var/lib/log-archive/spool` | Bounded spool mount. |
 | `LOG_ARCHIVE_ARCHIVE_DIR` | `/var/lib/log-archive/archive` | Verified local archive mount. |
 | `LOG_ARCHIVE_TOKEN_FILE` | `/run/secrets/log-archive-api-tokens.json` | Read-only scoped-token digest file. |
