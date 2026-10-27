@@ -47,6 +47,8 @@ jobs:
               assert.equal(await readFile(rotationLockFile,"utf8"),"synthetic-stable-lock");
               console.log(JSON.stringify({kernelOwnership:true,readOnlyExternalLock:true,nonRoot:true}));
             '
+      - name: Consume the pinned published release with rotation, restore and contender denial
+        run: bash test/published-image.sh
       - name: Run real MinIO adapter acceptance
         run: |
           set -euo pipefail

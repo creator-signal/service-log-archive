@@ -4,7 +4,7 @@
 
 It runs as one non-root container. Consumers explicitly mount managed log files/directories, durable state, a bounded spool, an archive directory, and runtime authentication material. The service does not discover host paths, mount paths dynamically, read a Docker socket, or contain Creator Signal deployment configuration.
 
-> Status: published `0.3.1` release. Local filesystem archival is the default; optional S3-compatible archival is enabled only through explicit endpoint, bucket, prefix, and file-backed credential configuration.
+> Status: published `0.3.2` release. Local filesystem archival is the default; optional S3-compatible archival is enabled only through explicit endpoint, bucket, prefix, and file-backed credential configuration.
 
 ## Capabilities
 
@@ -24,7 +24,7 @@ It runs as one non-root container. Consumers explicitly mount managed log files/
 
 Raw log contents are never available through the API, UI, metrics, or service logs.
 
-The default Compose example pins the [v0.3.1 release](https://github.com/creator-signal/service-log-archive/releases/tag/v0.3.1) by immutable digest. Its schema-2 ledger accepts schema 1 through the documented additive migration; rollback requires the matching pre-upgrade state snapshot.
+The default Compose example pins the [v0.3.2 release](https://github.com/creator-signal/service-log-archive/releases/tag/v0.3.2) by immutable digest. Its schema-2 ledger accepts schema 1 through the documented additive migration; rollback requires the matching pre-upgrade state snapshot. Public CI pulls this pinned image into a disposable non-root deployment and verifies rotation, JSONL restore and denial of a second owner sharing the same state.
 
 ## Quick start
 
