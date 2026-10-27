@@ -2,7 +2,7 @@ import { loadConfig } from "./config.mjs";
 import { StateStore } from "./state.mjs";
 import { Authenticator } from "./auth.mjs";
 import { RotationEngine } from "./rotation.mjs";
-import { createLogArchiveServer } from "./server.mjs";
+import { createLogArchiveServer,drainLogArchiveRequests } from "./server.mjs";
 import {acquireRotationOwnership,guardRotationOwnership} from './ownership.mjs';
 
 let owner,engine,server;
@@ -21,7 +21,7 @@ try {
   let stopping;
   const shutdown=()=>stopping??=(async()=>{
     const deadline=setTimeout(()=>process.exit(1),10_000);deadline.unref();
-    const requests=new Promise(resolve=>server.close(error=>resolve(error)));
+    const requests=new Promise(resolve=>server.close(error=>resolve(error))).then(async error=>{await drainLogArchiveRequests(server);return error;});
     const results=await Promise.allSettled([engine.stop(),requests]);
     // Await both drains before releasing, including when one fails.
     await owner.release();clearTimeout(deadline);

@@ -41,7 +41,10 @@ recovery automation separately. Independent locks or different kernels do not
 coordinate. Embedders acquire before `StateStore.load()`, call
 `guardRotationOwnership(owner,{store,engine})`, pass `owner.assertHeld` as the
 server's `beforeRequest` and engine checkpoint, and retain ownership through both
-HTTP and engine drain. Library construction alone does not acquire a lifetime lock.
+HTTP and engine drain. After `server.close()` completes, await
+`drainLogArchiveRequests(server)` as well: a closed client socket can leave an
+asynchronous handler still finishing its durable mutation. Library construction
+alone does not acquire a lifetime lock.
 
 ## Durable model
 
