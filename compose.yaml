@@ -2,7 +2,7 @@ name: service-log-archive
 
 services:
   log-archive:
-    image: ${LOG_ARCHIVE_IMAGE:-ghcr.io/creator-signal/service-log-archive@sha256:d7e6f918f5686d4634708e7683fd494a771508633675b8076af45d168da7dc57}
+    image: ${LOG_ARCHIVE_IMAGE:-ghcr.io/creator-signal/service-log-archive@sha256:c5f9269fd8d107e846d623d6dd5f9f15b78ddd09f49e5533942abbda5c097946}
     user: "10001:10001"
     read_only: true
     init: true
